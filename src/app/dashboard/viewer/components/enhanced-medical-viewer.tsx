@@ -88,8 +88,15 @@ const sampleImages: SampleImage[] = [
     url: '/hippo-ori.nii.gz',
     overlayUrl: '/hippo-segmentasi.nii.gz',
     type: 'Overlay Sample'
+  },
+  {
+    id: 'hippocampus-overlay-full',
+    title: 'Hippocampus with Segmentation Full Image',
+    description: 'Original hippocampus with segmentation overlay Left and Right',
+    url: '/sample1-ori.nii.gz',
+    overlayUrl: '/sample2.nii.gz',
+    type: 'Overlay Sample'
   }
-  
 ];
 
 const EnhancedMedicalViewer: React.FC = () => {
