@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { 
   ArrowLeft, Brain, MessageSquare, Layers, Eye, EyeOff, Plus, Settings,
   Download, Share, Maximize, RotateCcw, ZoomIn, ZoomOut, Move, Info,
-  Send, Upload, Play, Loader2, AlertCircle
+  Send, Upload, Play, Loader2, AlertCircle, Hand, MousePointer
 } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -89,6 +89,7 @@ const sampleImages: SampleImage[] = [
     overlayUrl: '/hippo-segmentasi.nii.gz',
     type: 'Overlay Sample'
   }
+  
 ];
 
 const EnhancedMedicalViewer: React.FC = () => {
@@ -111,9 +112,6 @@ const EnhancedMedicalViewer: React.FC = () => {
   const [showComments, setShowComments] = useState(true);
   const [showOverlay, setShowOverlay] = useState(true);
   const [overlayOpacity, setOverlayOpacity] = useState([0.7]);
-  const [currentSlice, setCurrentSlice] = useState(45);
-  const [currentView, setCurrentView] = useState('axial');
-  const [zoom, setZoom] = useState(1.0);
   const [brightness, setBrightness] = useState([50]);
   const [contrast, setContrast] = useState([50]);
   
@@ -124,9 +122,8 @@ const EnhancedMedicalViewer: React.FC = () => {
   const [isAddingComment, setIsAddingComment] = useState(false);
   const [selectedPosition, setSelectedPosition] = useState<{x: number, y: number} | null>(null);
 
-  // Viewer controls
-  const [viewerMode, setViewerMode] = useState('multiplanar');
-  const [crosshairVisible, setCrosshairVisible] = useState(true);
+  // Tools state
+  const [activeTool, setActiveTool] = useState<'pan' | 'zoom' | 'comment' | null>(null);
   const [colormap, setColormap] = useState('gray');
 
   // File refs
@@ -135,13 +132,6 @@ const EnhancedMedicalViewer: React.FC = () => {
 
   // Memoized calculations
   const hasOverlay = useMemo(() => Boolean(overlayUrl || overlayFile), [overlayUrl, overlayFile]);
-  const currentViewComments = useMemo(() => 
-    comments.filter(comment => 
-      comment.position && 
-      comment.position.view === currentView && 
-      comment.position.slice === currentSlice
-    ), [comments, currentView, currentSlice]
-  );
 
   // Event handlers
   const handleLoadImage = useCallback(() => {
@@ -211,12 +201,13 @@ const EnhancedMedicalViewer: React.FC = () => {
   }, []);
 
   const handleCanvasClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (!isAddingComment) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    setSelectedPosition({ x, y });
-  }, [isAddingComment]);
+    if (activeTool === 'comment' || isAddingComment) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      setSelectedPosition({ x, y });
+    }
+  }, [activeTool, isAddingComment]);
 
   const addComment = useCallback(() => {
     if (!newComment.trim() || !selectedPosition) return;
@@ -230,9 +221,9 @@ const EnhancedMedicalViewer: React.FC = () => {
       position: {
         x: selectedPosition.x,
         y: selectedPosition.y,
-        z: currentSlice,
-        slice: currentSlice,
-        view: currentView
+        z: 45, // Default slice
+        slice: 45,
+        view: 'axial'
       },
       timestamp: new Date().toISOString(),
       isPrivate: false
@@ -242,7 +233,8 @@ const EnhancedMedicalViewer: React.FC = () => {
     setNewComment('');
     setIsAddingComment(false);
     setSelectedPosition(null);
-  }, [newComment, selectedPosition, commentType, currentSlice, currentView]);
+    setActiveTool(null);
+  }, [newComment, selectedPosition, commentType]);
 
   const getCommentIcon = useCallback((type: string) => {
     switch (type) {
@@ -253,10 +245,11 @@ const EnhancedMedicalViewer: React.FC = () => {
   }, []);
 
   const resetView = useCallback(() => {
-    setZoom(1.0);
     setBrightness([50]);
     setContrast([50]);
-    setCurrentSlice(45);
+    setColormap('gray');
+    setOverlayOpacity([0.7]);
+    setActiveTool(null);
   }, []);
 
   const handleBack = useCallback(() => {
@@ -269,6 +262,7 @@ const EnhancedMedicalViewer: React.FC = () => {
     setError("");
     setIsLoading(false);
     setIsViewerReady(false);
+    setActiveTool(null);
   }, []);
 
   const handleError = useCallback((errorMessage: string) => {
@@ -279,8 +273,17 @@ const EnhancedMedicalViewer: React.FC = () => {
   const handleLoading = useCallback((loading: boolean) => {
     setIsLoading(loading);
     if (!loading) {
-      // Quick ready state without delay
       setIsViewerReady(true);
+    }
+  }, []);
+
+  const handleToolSelect = useCallback((tool: 'pan' | 'zoom' | 'comment') => {
+    setActiveTool(prev => prev === tool ? null : tool);
+    if (tool === 'comment') {
+      setIsAddingComment(true);
+    } else {
+      setIsAddingComment(false);
+      setSelectedPosition(null);
     }
   }, []);
 
@@ -493,68 +496,9 @@ const EnhancedMedicalViewer: React.FC = () => {
       )}
 
       <div className="flex flex-1 min-h-0">
-        {/* Left Sidebar - Viewer Controls */}
+        {/* Left Sidebar - Image Controls & Tools */}
         <div className="w-80 bg-gray-800 border-r border-gray-700 p-4 overflow-y-auto">
           <div className="space-y-6">
-            {/* View Controls */}
-            <Card className="bg-gray-700 border-gray-600">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-white text-sm">View Controls</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-white text-xs">View Mode</label>
-                  <Select value={viewerMode} onValueChange={setViewerMode}>
-                    <SelectTrigger className="bg-gray-600 border-gray-500 text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="multiplanar">Multiplanar</SelectItem>
-                      <SelectItem value="single">Single View</SelectItem>
-                      <SelectItem value="3d">3D Volume</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-white text-xs">Current View</label>
-                  <Select value={currentView} onValueChange={setCurrentView}>
-                    <SelectTrigger className="bg-gray-600 border-gray-500 text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="axial">Axial</SelectItem>
-                      <SelectItem value="coronal">Coronal</SelectItem>
-                      <SelectItem value="sagittal">Sagittal</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <label className="text-white text-xs">Slice</label>
-                    <span className="text-white text-xs">{currentSlice}/90</span>
-                  </div>
-                  <Slider
-                    value={[currentSlice]}
-                    onValueChange={(value) => setCurrentSlice(value[0])}
-                    max={90}
-                    min={1}
-                    step={1}
-                    className="w-full"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <label className="text-white text-xs">Crosshair</label>
-                  <Switch
-                    checked={crosshairVisible}
-                    onCheckedChange={setCrosshairVisible}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-
             {/* Image Controls */}
             <Card className="bg-gray-700 border-gray-600">
               <CardHeader className="pb-3">
@@ -568,7 +512,10 @@ const EnhancedMedicalViewer: React.FC = () => {
                   </div>
                   <Slider
                     value={brightness}
-                    onValueChange={setBrightness}
+                    onValueChange={(value) => {
+                      console.log('[UI] Brightness changed to:', value[0]);
+                      setBrightness(value);
+                    }}
                     max={100}
                     min={0}
                     step={1}
@@ -583,7 +530,10 @@ const EnhancedMedicalViewer: React.FC = () => {
                   </div>
                   <Slider
                     value={contrast}
-                    onValueChange={setContrast}
+                    onValueChange={(value) => {
+                      console.log('[UI] Contrast changed to:', value[0]);
+                      setContrast(value);
+                    }}
                     max={100}
                     min={0}
                     step={1}
@@ -593,7 +543,13 @@ const EnhancedMedicalViewer: React.FC = () => {
 
                 <div className="space-y-2">
                   <label className="text-white text-xs">Colormap</label>
-                  <Select value={colormap} onValueChange={setColormap}>
+                  <Select 
+                    value={colormap} 
+                    onValueChange={(value) => {
+                      console.log('[UI] Colormap changed to:', value);
+                      setColormap(value);
+                    }}
+                  >
                     <SelectTrigger className="bg-gray-600 border-gray-500 text-white">
                       <SelectValue />
                     </SelectTrigger>
@@ -615,6 +571,19 @@ const EnhancedMedicalViewer: React.FC = () => {
                   >
                     <RotateCcw className="h-3 w-3 mr-1" />
                     Reset
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      // Force refresh image controls
+                      if ((window as any).refreshNiiVue) {
+                        (window as any).refreshNiiVue();
+                      }
+                    }}
+                    className="bg-gray-600 border-gray-500 text-white hover:bg-gray-500"
+                  >
+                    <RotateCcw className="h-3 w-3" />
                   </Button>
                   <Button
                     variant="outline"
@@ -673,37 +642,75 @@ const EnhancedMedicalViewer: React.FC = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="w-full bg-gray-600 border-gray-500 text-white hover:bg-gray-500"
+                  onClick={() => handleToolSelect('pan')}
+                  className={`w-full ${activeTool === 'pan' ? 'bg-blue-600 border-blue-500' : 'bg-gray-600 border-gray-500'} text-white hover:bg-gray-500`}
                 >
-                  <Move className="h-3 w-3 mr-2" />
-                  Pan
+                  <Hand className="h-3 w-3 mr-2" />
+                  Pan {activeTool === 'pan' && '(Active)'}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="w-full bg-gray-600 border-gray-500 text-white hover:bg-gray-500"
+                  onClick={() => handleToolSelect('zoom')}
+                  className={`w-full ${activeTool === 'zoom' ? 'bg-blue-600 border-blue-500' : 'bg-gray-600 border-gray-500'} text-white hover:bg-gray-500`}
                 >
                   <ZoomIn className="h-3 w-3 mr-2" />
-                  Zoom
+                  Zoom {activeTool === 'zoom' && '(Active)'}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setIsAddingComment(!isAddingComment)}
-                  className={`w-full ${isAddingComment ? 'bg-blue-600 border-blue-500' : 'bg-gray-600 border-gray-500'} text-white hover:bg-gray-500`}
+                  onClick={() => handleToolSelect('comment')}
+                  className={`w-full ${activeTool === 'comment' ? 'bg-blue-600 border-blue-500' : 'bg-gray-600 border-gray-500'} text-white hover:bg-gray-500`}
                 >
                   <Plus className="h-3 w-3 mr-2" />
-                  Add Comment
+                  Add Comment {activeTool === 'comment' && '(Active)'}
                 </Button>
               </CardContent>
             </Card>
+
+            {/* Tool Instructions */}
+            {activeTool && (
+              <Card className="bg-blue-900/30 border-blue-600">
+                <CardContent className="pt-4">
+                  <div className="text-blue-200 text-xs">
+                    {activeTool === 'pan' && (
+                      <div>
+                        <p className="font-medium mb-1">Pan Tool Active</p>
+                        <p>Click and drag to move the image around</p>
+                      </div>
+                    )}
+                    {activeTool === 'zoom' && (
+                      <div>
+                        <p className="font-medium mb-1">Zoom Tool Active</p>
+                        <p>Scroll wheel to zoom in/out, or click to zoom in</p>
+                      </div>
+                    )}
+                    {activeTool === 'comment' && (
+                      <div>
+                        <p className="font-medium mb-1">Comment Tool Active</p>
+                        <p>Click on the image to place a comment marker</p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
 
         {/* Main Viewer */}
         <div className="flex-1 relative bg-black">
           {/* Canvas Container */}
-          <div className="w-full h-full relative" onClick={handleCanvasClick}>
+          <div 
+            className="w-full h-full relative" 
+            onClick={handleCanvasClick}
+            style={{ 
+              cursor: activeTool === 'pan' ? 'grab' : 
+                     activeTool === 'zoom' ? 'zoom-in' : 
+                     activeTool === 'comment' ? 'crosshair' : 'default' 
+            }}
+          >
             <NiiVueViewer
               imageUrl={imageUrl}
               imageFile={imageFile}
@@ -713,7 +720,11 @@ const EnhancedMedicalViewer: React.FC = () => {
               onLoading={handleLoading}
               overlayOpacity={overlayOpacity[0]}
               showOverlay={showOverlay}
-              className="w-full h-full cursor-crosshair"
+              brightness={brightness[0]}
+              contrast={contrast[0]}
+              colormap={colormap}
+              activeTool={activeTool}
+              className="w-full h-full"
             />
           </div>
 
@@ -731,7 +742,7 @@ const EnhancedMedicalViewer: React.FC = () => {
           )}
 
           {/* Comment Markers */}
-          {isViewerReady && currentViewComments.map((comment) => (
+          {isViewerReady && comments.map((comment) => (
             <Popover key={comment.id}>
               <PopoverTrigger asChild>
                 <button
@@ -759,7 +770,7 @@ const EnhancedMedicalViewer: React.FC = () => {
           ))}
 
           {/* Selected Position Marker */}
-          {selectedPosition && isAddingComment && (
+          {selectedPosition && activeTool === 'comment' && (
             <div
               className="absolute w-4 h-4 bg-yellow-500 border-2 border-white rounded-full shadow-lg animate-pulse z-10"
               style={{
@@ -769,18 +780,11 @@ const EnhancedMedicalViewer: React.FC = () => {
             />
           )}
 
-          {/* Instructions */}
-          {isAddingComment && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg z-10">
-              <p className="text-sm">Click on the image to place a comment marker</p>
-            </div>
-          )}
-
           {/* Viewer Info */}
           <div className="absolute bottom-4 left-4 bg-black/50 text-white px-3 py-2 rounded-lg z-10">
             <div className="text-xs space-y-1">
-              <div>View: {currentView} | Slice: {currentSlice}/90</div>
-              <div>Zoom: {zoom.toFixed(1)}x | Position: {selectedPosition ? `${selectedPosition.x}, ${selectedPosition.y}` : 'N/A'}</div>
+              <div>Active Tool: {activeTool || 'None'}</div>
+              <div>Position: {selectedPosition ? `${selectedPosition.x}, ${selectedPosition.y}` : 'N/A'}</div>
               {hasOverlay && <div>Overlay: {showOverlay ? `${Math.round(overlayOpacity[0] * 100)}%` : 'Hidden'}</div>}
             </div>
           </div>
@@ -837,7 +841,7 @@ const EnhancedMedicalViewer: React.FC = () => {
             </div>
 
             {/* Add Comment Form */}
-            {selectedPosition && isAddingComment && (
+            {selectedPosition && activeTool === 'comment' && (
               <div className="p-4 border-t border-gray-700 bg-gray-750">
                 <div className="space-y-3">
                   <h4 className="font-medium text-white text-sm">Add Comment</h4>
@@ -873,7 +877,7 @@ const EnhancedMedicalViewer: React.FC = () => {
                     </Button>
                     <Button
                       onClick={() => {
-                        setIsAddingComment(false);
+                        setActiveTool(null);
                         setSelectedPosition(null);
                         setNewComment('');
                       }}
@@ -914,6 +918,7 @@ const EnhancedMedicalViewer: React.FC = () => {
         <div className="flex items-center gap-4">
           <span>Files: {1 + (hasOverlay ? 1 : 0)}</span>
           <span>Comments: {comments.length}</span>
+          <span>Active Tool: {activeTool || 'None'}</span>
           {isViewerReady && <span className="text-green-400">● Viewer Ready</span>}
           {isLoading && <span className="text-yellow-400">● Loading...</span>}
         </div>

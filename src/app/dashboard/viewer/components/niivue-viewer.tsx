@@ -1,12 +1,9 @@
-// app/dashboard/viewer/components/niivue-viewer.tsx - ULTRA OPTIMIZED
+// app/dashboard/viewer/components/niivue-viewer.tsx - ULTRA OPTIMIZED WITH WORKING CONTROLS
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Niivue } from "@niivue/niivue";
-import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
-import { Loader2, Eye, EyeOff } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 interface NiiVueViewerProps {
   imageUrl?: string;
@@ -17,6 +14,10 @@ interface NiiVueViewerProps {
   onLoading?: (loading: boolean) => void;
   overlayOpacity?: number;
   showOverlay?: boolean;
+  brightness?: number;
+  contrast?: number;
+  colormap?: string;
+  activeTool?: 'pan' | 'zoom' | 'comment' | null;
   className?: string;
 }
 
@@ -29,14 +30,21 @@ const NiiVueViewer: React.FC<NiiVueViewerProps> = ({
   onLoading,
   overlayOpacity = 0.7,
   showOverlay = true,
+  brightness = 50,
+  contrast = 50,
+  colormap = 'gray',
+  activeTool = null,
   className = "w-full h-full"
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const nvRef = useRef<Niivue | null>(null);
+  const nvRef = useRef<any>(null);
   const mountedRef = useRef(true);
   const [isInitialized, setIsInitialized] = useState(false);
   const [internalOverlayOpacity, setInternalOverlayOpacity] = useState([overlayOpacity]);
   const [internalShowOverlay, setInternalShowOverlay] = useState(showOverlay);
+  
+  // Store previous values to prevent unnecessary updates
+  const prevControlsRef = useRef({ brightness, contrast, colormap });
 
   // Stable cleanup function
   const cleanupViewer = useCallback(() => {
@@ -54,7 +62,61 @@ const NiiVueViewer: React.FC<NiiVueViewerProps> = ({
     }
   }, []);
 
-  // Fast initialization without dependency loops
+  // Apply image controls function - STABLE with no dependencies
+  const applyImageControls = useCallback((brightVal: number, contrastVal: number, colormapVal: string) => {
+    if (!nvRef.current || !isInitialized) return;
+
+    try {
+      const nv = nvRef.current;
+      if (!nv.volumes || nv.volumes.length === 0) return;
+
+      const vol = nv.volumes[0];
+      
+      // Store original values only once
+      if (typeof vol.originalCalMin === 'undefined') {
+        vol.originalCalMin = vol.cal_min;
+        vol.originalCalMax = vol.cal_max;
+        vol.originalGlobalMin = vol.global_min;
+        vol.originalGlobalMax = vol.global_max;
+      }
+      
+      // Apply brightness/contrast
+      const originalRange = vol.originalCalMax - vol.originalCalMin;
+      const brightnessOffset = (brightVal - 50) / 50;
+      const center = (vol.originalCalMin + vol.originalCalMax) / 2;
+      const newCenter = center + (brightnessOffset * originalRange * 0.5);
+      const contrastFactor = contrastVal / 50;
+      const newWidth = originalRange * contrastFactor;
+      
+      vol.cal_min = newCenter - (newWidth / 2);
+      vol.cal_max = newCenter + (newWidth / 2);
+      
+      // Ensure bounds
+      if (vol.originalGlobalMin !== undefined && vol.originalGlobalMax !== undefined) {
+        vol.cal_min = Math.max(vol.cal_min, vol.originalGlobalMin);
+        vol.cal_max = Math.min(vol.cal_max, vol.originalGlobalMax);
+      }
+      
+      // Apply colormap
+      if (vol.colormap !== colormapVal) {
+        vol.colormap = colormapVal;
+        try {
+          if (nv.setColormap) nv.setColormap(0, colormapVal);
+        } catch (e) {
+          // Ignore setColormap errors
+        }
+      }
+      
+      // Force update
+      if (nv.updateGLVolume) nv.updateGLVolume();
+      if (nv.drawScene) nv.drawScene();
+      
+    } catch (error) {
+      console.error("[NiiVue] Error applying image controls:", error);
+    }
+  }, [isInitialized]);
+
+  // Fast initialization - ORIGINAL STABLE VERSION
   const initializeViewer = useCallback(async () => {
     if (!canvasRef.current || (!imageUrl && !imageFile) || !mountedRef.current) return;
 
@@ -121,26 +183,63 @@ const NiiVueViewer: React.FC<NiiVueViewerProps> = ({
     }
   }, [imageUrl, imageFile, overlayUrl, overlayFile, cleanupViewer]);
 
-  // Handle overlay opacity updates
+  // Handle overlay opacity updates - STABLE
   const updateOverlayOpacity = useCallback((opacity: number) => {
-    if (nvRef.current && nvRef.current.volumes.length > 1) {
-      nvRef.current.setOpacity(1, opacity);
-      nvRef.current.updateGLVolume();
+    if (nvRef.current && nvRef.current.volumes && nvRef.current.volumes.length > 1) {
+      try {
+        if (nvRef.current.setOpacity) nvRef.current.setOpacity(1, opacity);
+        if (nvRef.current.updateGLVolume) nvRef.current.updateGLVolume();
+      } catch (error) {
+        console.warn("[NiiVue] Overlay opacity error:", error);
+      }
     }
   }, []);
 
-  // Handle overlay toggle
+  // Handle overlay toggle - STABLE
   const toggleOverlay = useCallback(() => {
-    if (nvRef.current && nvRef.current.volumes.length > 1) {
+    if (nvRef.current && nvRef.current.volumes && nvRef.current.volumes.length > 1) {
       const newVisibility = !internalShowOverlay;
       const newOpacity = newVisibility ? internalOverlayOpacity[0] : 0;
-      nvRef.current.setOpacity(1, newOpacity);
-      nvRef.current.updateGLVolume();
+      try {
+        if (nvRef.current.setOpacity) nvRef.current.setOpacity(1, newOpacity);
+        if (nvRef.current.updateGLVolume) nvRef.current.updateGLVolume();
+      } catch (error) {
+        console.warn("[NiiVue] Overlay toggle error:", error);
+      }
       setInternalShowOverlay(newVisibility);
     }
   }, [internalShowOverlay, internalOverlayOpacity]);
 
-  // Sync external overlay props
+  // Update drag mode when tool changes - STABLE
+  useEffect(() => {
+    if (nvRef.current && isInitialized) {
+      try {
+        const dragMode = activeTool === 'pan' ? 1 : activeTool === 'zoom' ? 3 : 1;
+        if (nvRef.current.opts) {
+          nvRef.current.opts.dragMode = dragMode;
+        }
+      } catch (error) {
+        console.warn("[NiiVue] Drag mode error:", error);
+      }
+    }
+  }, [activeTool, isInitialized]);
+
+  // Apply image controls only when values actually change - PERFORMANCE OPTIMIZED
+  useEffect(() => {
+    if (isInitialized && nvRef.current) {
+      const prev = prevControlsRef.current;
+      
+      // Only apply if values actually changed
+      if (prev.brightness !== brightness || prev.contrast !== contrast || prev.colormap !== colormap) {
+        applyImageControls(brightness, contrast, colormap);
+        
+        // Update stored values
+        prevControlsRef.current = { brightness, contrast, colormap };
+      }
+    }
+  }, [brightness, contrast, colormap, isInitialized, applyImageControls]);
+
+  // Sync external overlay props - STABLE
   useEffect(() => {
     if (overlayOpacity !== internalOverlayOpacity[0]) {
       setInternalOverlayOpacity([overlayOpacity]);
@@ -159,23 +258,22 @@ const NiiVueViewer: React.FC<NiiVueViewerProps> = ({
     }
   }, [showOverlay, isInitialized, internalOverlayOpacity, updateOverlayOpacity]);
 
-  // Handle internal opacity changes
+  // Handle internal opacity changes - STABLE
   useEffect(() => {
     if (isInitialized && internalShowOverlay) {
       updateOverlayOpacity(internalOverlayOpacity[0]);
     }
   }, [internalOverlayOpacity, isInitialized, internalShowOverlay, updateOverlayOpacity]);
 
-  // Initialize on mount/image change - removed problematic dependencies
+  // Initialize on mount/image change - ORIGINAL DEPENDENCIES
   useEffect(() => {
     const hasImage = imageUrl || imageFile;
     if (hasImage && canvasRef.current && mountedRef.current) {
-      // Quick initialization without delay
       initializeViewer();
     }
-  }, [imageUrl, imageFile, overlayUrl, overlayFile]); // Only essential deps
+  }, [imageUrl, imageFile, overlayUrl, overlayFile]); // ONLY essential deps - no loops!
 
-  // Mount/unmount
+  // Mount/unmount - STABLE
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -188,9 +286,6 @@ const NiiVueViewer: React.FC<NiiVueViewerProps> = ({
 
   return (
     <div className="w-full h-full relative bg-slate-900">
-      {/* OVERLAY CONTROLS PANEL REMOVED */}
-
-      {/* Canvas */}
       <canvas
         ref={canvasRef}
         className={className}
@@ -208,6 +303,14 @@ const NiiVueViewer: React.FC<NiiVueViewerProps> = ({
             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
             <p>Loading medical image{hasOverlay ? ' with overlay' : ''}...</p>
           </div>
+        </div>
+      )}
+
+      {/* Debug Info - Optional */}
+      {isInitialized && process.env.NODE_ENV === 'development' && (
+        <div className="absolute top-2 left-2 bg-black/70 text-white text-xs p-2 rounded z-20">
+          <div>B: {brightness}% | C: {contrast}% | {colormap}</div>
+          <div>Tool: {activeTool || 'none'}</div>
         </div>
       )}
     </div>
